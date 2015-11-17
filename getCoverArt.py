@@ -2,6 +2,7 @@ import os
 from tinytag import TinyTag
 import requests
 from lxml import html
+import zipfile
 
 __author__ = 'ipurton'
 
@@ -9,6 +10,9 @@ __author__ = 'ipurton'
 # info and searches coverlib.com for images associated with the album.
 
 # Revision Log:
+# 11/16/2015    IP
+# Script now automatically unzips the archive downloaded from coverlib and
+# deletes that archive, along with an unneeded readme file.
 # 11/15/2015    IP
 # First working version. Requires script to be in the same folder as music
 # files needing cover images.
@@ -137,22 +141,37 @@ for url in art_urls:
     art_zips.append(url_head + temp_zip[0])
 
 # For each url in art_zips, generate a local file container and stream the zip
-# into it.
+# into it. Then, extract the zip file and do some minor tidying.
 ii = 1
 for url in art_zips:
-    filename = "image_zip{}.zip".format(str(ii))
+    filename = "image_zip{}.zip".format(ii)
     
     with open(filename, "wb") as handle:
         r = requests.get(url, stream=True)
 
         if not r.ok:
-            exit("Something went terribly wrong.")
+            exit("Zip file not found.")
 
         for block in r.iter_content(1024):
             handle.write(block)
 
         r.close()
 
+    with zipfile.ZipFile(filename) as zip_ref:
+        zip_ref.extractall()
+
+    #zip_ref = zipfile.ZipFile(filename)
+    #zip_ref.close()
+
+    try:
+        os.remove(filename)
+    except PermissionError:
+        print("Zip file couldn't be removed automatically.")
+
+    if os.path.isfile("readme.txt"):
+        os.remove("readme.txt")
+
     ii += 1
 
 print("{} image sets found and saved to disk.".format(ii-1))
+os.system("pause") #Windows only; use input() for other OSs
