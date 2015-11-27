@@ -10,6 +10,8 @@ __author__ = 'ipurton'
 # info and searches coverlib.com for images associated with the album.
 
 # Revision Log:
+# 11/26/2015    IP
+# Added allcdcovers as a second search host to add redundancy.
 # 11/16/2015    IP
 # Script now automatically unzips the archive downloaded from coverlib and
 # deletes that archive, along with an unneeded readme file.
@@ -97,81 +99,167 @@ else:
 # well, largely due to labeling issues on coverlib. As is, this script strips
 # words containing special characters.
 
+# Better way to do this? Maybe a dictionary for replacing characters, or some
+# form of input option?
+
 alpha_al = elimSpecials(album)
 alpha_ar = elimSpecials(artist)
 
-# Define search url using album & artist info
-# Bizzarely, this ONLY works when formatter as "artist album". "Album artist"
-# achieves no results!
-url = "http://coverlib.com/search/?q={}+{}&Sektion=2".format(alpha_ar, alpha_al)
+# Define potential search hosts
+host_urls = ["http://www.allcdcovers.com", "http://coverlib.com"]
+    # As of 11/24/2015, coverlib.com appears to be down.
 
-# Import html from search page into an xml tree
-page = requests.get(url)
-tree = html.fromstring(page.content)
-
-# coverlib's search result page returns div rows of thumbnails for full images.
-# Each div of class=row has a div containing all thumbnails, and a unique id
-# for that set of images.
-# Ex: <div class="thumbnail text-muted searchitem js_href"
-# data-href="/entry/id202809/justin-timberlake-futuresex-lovesounds">
-# The data-href value identifies the page where the full-size images can be
-# found.
-
-# This finds divs of class "thumbnail ..." and returns the data-href values as
-# a list.
-art_urls = tree.xpath(
-    "//div[@class='thumbnail text-muted searchitem js_href']/@data-href")
-
-if len(art_urls) is 0:
-    exit("No results found for album/artist.")
-
-# Each page referred to by an art_url has a line similar to the following:
-# Ex. <form id="EntryForm"
-# action="/Download/zip/Justin_Timberlake-Futuresex-Lovesounds.zip"
-# method="post">
-# The value of the action parameter needs to be pulled for each url.
-
-art_zips = []
-url_head = "http://coverlib.com"
-for url in art_urls:
-    r_url = url_head + url
-    temp_r = requests.get(r_url)
-    temp_tree = html.fromstring(temp_r.content)
-    temp_zip = temp_tree.xpath("//form[@id='EntryForm']/@action")
-    art_zips.append(url_head + temp_zip[0])
-
-# For each url in art_zips, generate a local file container and stream the zip
-# into it. Then, extract the zip file and do some minor tidying.
-ii = 1
-for url in art_zips:
-    filename = "image_zip{}.zip".format(ii)
-    
-    with open(filename, "wb") as handle:
-        r = requests.get(url, stream=True)
-
-        if not r.ok:
-            exit("Zip file not found.")
-
-        for block in r.iter_content(1024):
-            handle.write(block)
-
-        r.close()
-
-    with zipfile.ZipFile(filename) as zip_ref:
-        zip_ref.extractall()
-
-    #zip_ref = zipfile.ZipFile(filename)
-    #zip_ref.close()
-
+# Iterate through potential hosts, use the one that's up as the host
+for url in host_urls:
     try:
-        os.remove(filename)
-    except PermissionError:
-        print("Zip file couldn't be removed automatically.")
+        r = requests.get(url)
+        s_host = url
+    except:
+        print("{} is down.".format(url))
 
-    if os.path.isfile("readme.txt"):
-        os.remove("readme.txt")
+if s_host:
+    print("Using {} to run search.".format(s_host))
+else:
+    exit("All search hosts are down. Try again later or add more hosts.")
 
-    ii += 1
+# Each search host neccisitates different http scraping procedures. Currently,
+# this is handled with if/elif statements. Is there a better way...?
+## allcdcovers ##
+if s_host is host_urls[0]:
+    # Define search url using album & artist info
+    url = "http://www.allcdcovers.com/search/all/all/{}+{}/1".format(alpha_ar,
+                                                                     alpha_al)
 
-print("{} image sets found and saved to disk.".format(ii-1))
-os.system("pause") #Windows only; use input() for other OSs
+    # Import html from search page into an xml tree
+    page = requests.get(url)
+    tree = html.fromstring(page.content)
+
+    # Search results page returns divs of class "coverLink" that contain a link
+    # to all images for that cds.
+    # Ex: <div class="coverLink">
+    # <a href="/show/330836/ought_more_than_any_other_day_2014_retail_cd/front">
+    # <img src="/images/loading.gif" alt="" id="cover_image_805204828"/>
+    # <br/>Front</a>
+
+    # Find divs of class "coverLink" and return child href values as a list.
+    art_urls = tree.xpath("//div[@class='coverLink']//a/@href")
+
+    if len(art_urls) is 0:
+        exit("No results found for album/artist.")
+
+    # Each art_url page contains a div of class "selectedCoverThumb" with a
+    # child href pointing to a download page for the image.
+
+    img_urls = {}
+    ii = 1
+    for url in art_urls:
+        # The last part of the art_url says what kind of image this is (eg.
+        # front, inlay, etc). This can be used to identify the url and, later,
+        # the downloaded image.
+        x = url.split("/")
+        img_type = "{}-{}".format(str(ii),x[-1])
+        r_url = s_host + url
+        temp_r = requests.get(r_url)
+        temp_tree = html.fromstring(temp_r.content)
+        temp_url = temp_tree.xpath(
+            "//div[@class='selectedCoverThumb']//a/@href")
+        img_urls[img_type] = (s_host + temp_url[0])
+        ii += 1
+
+    for name,url in img_urls.items():
+        filename = "{}.jpg".format(name)
+        
+        with open(filename, "wb") as handle:
+            r = requests.get(url, stream=True)
+
+            if not r.ok:
+                exit("Zip file not found.")
+
+            for block in r.iter_content(1024):
+                handle.write(block)
+
+            r.close()
+
+    print("{} images found and saved to disk.".format(ii-1))
+    os.system("pause") #Windows only; use input() for other OSs
+
+## coverlib ##    
+elif s_host is host_urls[1]:
+    # Define search url using album & artist info
+    # Bizzarely, this ONLY works when formatted as "artist album".
+    # "Album artist" achieves no results!
+    url = "http://coverlib.com/search/?q={}+{}&Sektion=2".format(alpha_ar,
+                                                                 alpha_al)
+
+    # Import html from search page into an xml tree
+    page = requests.get(url)
+    tree = html.fromstring(page.content)
+
+    # coverlib's search result page returns div rows of thumbnails for full
+    # images. Each div of class=row has a div containing all thumbnails,
+    # and a unique id for that set of images.
+    # Ex: <div class="thumbnail text-muted searchitem js_href"
+    # data-href="/entry/id202809/justin-timberlake-futuresex-lovesounds">
+    # The data-href value identifies the page where the full-size images
+    # can be found.
+
+    # This finds divs of class "thumbnail ..." and returns the data-href
+    # values as a list.
+    art_urls = tree.xpath(
+        "//div[@class='thumbnail text-muted searchitem js_href']/@data-href"
+        )
+
+    if len(art_urls) is 0:
+        exit("No results found for album/artist.")
+
+    # Each page referred to by an art_url has a line similar to the
+    # following:
+    # Ex. <form id="EntryForm"
+    # action="/Download/zip/Justin_Timberlake-Futuresex-Lovesounds.zip"
+    # method="post">
+    # The value of the action parameter needs to be pulled for each url.
+
+    art_zips = []
+    for url in art_urls:
+        r_url = s_host + url
+        temp_r = requests.get(r_url)
+        temp_tree = html.fromstring(temp_r.content)
+        temp_zip = temp_tree.xpath("//form[@id='EntryForm']/@action")
+        art_zips.append(s_host + temp_zip[0])
+
+    # For each url in art_zips, generate a local file container and
+    # stream the zip into it. Then, extract the zip file and do some
+    # minor tidying.
+    ii = 1
+    for url in art_zips:
+        filename = "image_zip{}.zip".format(ii)
+        
+        with open(filename, "wb") as handle:
+            r = requests.get(url, stream=True)
+
+            if not r.ok:
+                exit("Zip file not found.")
+
+            for block in r.iter_content(1024):
+                handle.write(block)
+
+            r.close()
+
+        with zipfile.ZipFile(filename) as zip_ref:
+            zip_ref.extractall()
+
+        #zip_ref = zipfile.ZipFile(filename)
+        #zip_ref.close()
+
+        try:
+            os.remove(filename)
+        except PermissionError:
+            print("Zip file couldn't be removed automatically.")
+
+        if os.path.isfile("readme.txt"):
+            os.remove("readme.txt")
+
+        ii += 1
+
+    print("{} image sets found and saved to disk.".format(ii-1))
+    os.system("pause") #Windows only; use input() for other OSs
