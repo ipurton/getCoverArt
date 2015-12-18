@@ -1,3 +1,5 @@
+#!/usr/bin/env python3.4
+
 import os
 from tinytag import TinyTag
 import requests
@@ -10,6 +12,10 @@ __author__ = 'ipurton'
 # info and searches coverlib.com for images associated with the album.
 
 # Revision Log:
+# 12/18/2015    IP
+# Better commenting.
+# 12/16/2015    IP
+# Better handling of search failures on allcdcovers.
 # 11/26/2015    IP
 # Added allcdcovers as a second search host to add redundancy.
 # 11/16/2015    IP
@@ -21,6 +27,7 @@ __author__ = 'ipurton'
 
 # To-Do:
 # Allow script to query folders other than current directory (cmd args?)
+# Add additional search hosts.
 
 # Dependencies:
 # lxml (use http://www.lfd.uci.edu/~gohlke/pythonlibs/#lxml on Windows)
@@ -78,11 +85,13 @@ for file in m_files:
         if not temp_al in al_list:
             al_list.append(temp_al)
     except:
-        exit("No available tag information.")
+        input("No available tag information; press Enter to exit.")
+        exit()
 
 # If music files come from more than one album, exit script with error
 if len(al_list) > 1:
-    exit("More than one album found in current dir. Please check files.")
+    input("More than one album found in current dir; press Enter to exit.")
+    exit()
 else:
     album = al_list[0].replace(" ", "+")
 
@@ -96,7 +105,7 @@ else:
 ### Run Search Operation ###
 
 # The following search operation doesn't appear to handle special characters
-# well, largely due to labeling issues on coverlib. As is, this script strips
+# well, largely due to labeling issues on hosts. As is, this script strips
 # words containing special characters.
 
 # Better way to do this? Maybe a dictionary for replacing characters, or some
@@ -117,10 +126,13 @@ for url in host_urls:
     except:
         print("{} is down.".format(url))
 
+# If an active host was found, notify user what's being used. Otherwise, exit
+# with an explanation.
 if s_host:
     print("Using {} to run search.".format(s_host))
 else:
-    exit("All search hosts are down. Try again later or add more hosts.")
+    input("All search hosts are down. Press Enter to exit.")
+    exit()
 
 # Each search host neccisitates different http scraping procedures. Currently,
 # this is handled with if/elif statements. Is there a better way...?
@@ -144,9 +156,41 @@ if s_host is host_urls[0]:
     # Find divs of class "coverLink" and return child href values as a list.
     art_urls = tree.xpath("//div[@class='coverLink']//a/@href")
 
-    if len(art_urls) is 0:
-        exit("No results found for album/artist.")
+    # Generate count of found urls
+    url_count = len(art_urls)
 
+    # If no results are found, provide an option for an alternative search
+    if url_count is 0:
+        print("No results found for album/artist search. ",
+              "Do you want to try a keyword search?")
+        check = int(input("1: enter new search parameters, 2: exit program: "))
+        if check is 1:
+            # As long as there no search results, allow user to search for
+            # album covers using specified keywords.
+            # Possibly remove the while loop and do a single keyword search?
+            while url_count is 0:
+                keywords = input("Enter new search keywords: ")
+                keywords = keywords.replace(" ", "+")
+
+                if keywords is "~":
+                    exit()
+
+                # Rerun search with user-defined keywords
+                url = "http://www.allcdcovers.com/search/all/all/{}/1".format(
+                    keywords)
+                page = requests.get(url)
+                tree = html.fromstring(page.content)
+
+                art_urls = tree.xpath("//div[@class='coverLink']//a/@href")
+
+                url_count = len(art_urls)
+
+                if url_count is 0:
+                    print("No results found. ",
+                          "Try a new search or enter ~ to exit.")
+        elif check is 2:
+            exit()
+        
     # Each art_url page contains a div of class "selectedCoverThumb" with a
     # child href pointing to a download page for the image.
 
@@ -156,24 +200,31 @@ if s_host is host_urls[0]:
         # The last part of the art_url says what kind of image this is (eg.
         # front, inlay, etc). This can be used to identify the url and, later,
         # the downloaded image.
-        x = url.split("/")
-        img_type = "{}-{}".format(str(ii),x[-1])
-        r_url = s_host + url
+        x = url.split("/") # Split url into indiv. elements
+        img_type = "[{}] {}".format(str(ii), x[-1])
+            # Create a unique filename for each img using a counter and the
+            # last element of the url.
+        r_url = s_host + url # Recreate full url
         temp_r = requests.get(r_url)
         temp_tree = html.fromstring(temp_r.content)
         temp_url = temp_tree.xpath(
             "//div[@class='selectedCoverThumb']//a/@href")
         img_urls[img_type] = (s_host + temp_url[0])
+            # Populate img_urls dict; key is img_type & value is the url of the
+            # image file.
         ii += 1
 
+    # Iterate through dict, saving out images
     for name,url in img_urls.items():
         filename = "{}.jpg".format(name)
+            # allcdcovers has all cover images as jpg
         
         with open(filename, "wb") as handle:
             r = requests.get(url, stream=True)
 
             if not r.ok:
-                exit("Zip file not found.")
+                print("Image not found at {}.".format(url))
+                break
 
             for block in r.iter_content(1024):
                 handle.write(block)
@@ -181,7 +232,7 @@ if s_host is host_urls[0]:
             r.close()
 
     print("{} images found and saved to disk.".format(ii-1))
-    os.system("pause") #Windows only; use input() for other OSs
+    os.system("pause") # Windows only; use input() for other OSs
 
 ## coverlib ##    
 elif s_host is host_urls[1]:
@@ -210,8 +261,9 @@ elif s_host is host_urls[1]:
         )
 
     if len(art_urls) is 0:
-        exit("No results found for album/artist.")
-
+        input("No results found for album/artist; press Enter to exit.")
+        exit()
+        
     # Each page referred to by an art_url has a line similar to the
     # following:
     # Ex. <form id="EntryForm"
@@ -238,7 +290,8 @@ elif s_host is host_urls[1]:
             r = requests.get(url, stream=True)
 
             if not r.ok:
-                exit("Zip file not found.")
+                print("Zip file not found at {}.".format(url))
+                break
 
             for block in r.iter_content(1024):
                 handle.write(block)
@@ -247,9 +300,6 @@ elif s_host is host_urls[1]:
 
         with zipfile.ZipFile(filename) as zip_ref:
             zip_ref.extractall()
-
-        #zip_ref = zipfile.ZipFile(filename)
-        #zip_ref.close()
 
         try:
             os.remove(filename)
